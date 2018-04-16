@@ -1,0 +1,423 @@
+<?php
+/**
+ *  @file
+ *  Salesforce Mapping
+ *
+ *  v0.1 Warning: This is very wet code.
+ */
+
+
+/**
+ *  There are cleaner ways of doing this, but will work for now
+ */
+function sfmapping_init() {
+  if (isset($_REQUEST['sfmapping_delete']) ) {
+      $var = explode('_', $_REQUEST['sfmapping_delete']);
+        db_delete('sfmapping')
+          ->condition('form_id', $var[0])
+          ->condition('form_field', $var[1])
+          ->execute();
+        drupal_goto('/admin/sfmapping');
+        }
+      }
+
+/**
+ *  Implements hook_menu
+ */
+function sfmapping_menu() {
+  $items = array();
+  $items['admin/sfmapping'] = array(
+              'title' => 'Salesforce Mapping',
+              'page callback' => 'sfmapping_page',
+              'access arguments' => array('administer access control'),
+              'access callback' => 'user_access',
+              'description' => 'Salesforce Mapping Control Page',
+              'type' => MENU_NORMAL_ITEM,
+          );
+  $items['admin/sfmapping/loader'] = array(
+    'title' => 'Mapping',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10
+  );
+  $items['admin/sfmapping/credentials'] = array(
+    'title' => 'Credentials',
+    'type' => MENU_LOCAL_TASK,
+    'page callback' => 'credentials_page',
+    'access arguments' => array('administer access content')
+  );
+
+
+   return $items;
+}
+
+
+function sfmapping_page() {
+    return drupal_get_form('sfmapping_form');
+}
+
+function credentials_page() {
+    return drupal_get_form('credentials_form');
+}
+
+
+
+/**
+ *  builds sf credentials admin form
+ */
+function credentials_form($form, $form_state) {
+
+  $user  = variable_get('cred_user', '');
+  $pass  = variable_get('cred_pass', '');
+  $key   = variable_get('cred_key', '');
+  $email = variable_get('cred_error', '');
+
+  $form['cred_user'] = array(
+     '#type' => 'textfield',
+     '#title' => t('User ID'),
+     '#default_value' => $user,
+    );
+  $form['cred_pass'] = array(
+     '#type' => 'textfield',
+     '#title' => t('Password'),
+     '#default_value' => $pass,
+    );
+  $form['cred_key'] = array(
+     '#type' => 'textfield',
+     '#title' => t('Key'),
+     '#default_value' => $key,
+    );
+  $form['cred_error'] = array(
+     '#type' => 'textfield',
+     '#title' => t('Email'),
+     '#default_value' => $email,
+     '#description' => t('In case of Salesforce connection error.')
+    );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Submit',
+  );
+
+
+  $form['#submit'][] = 'cred_sf_admin_submit';
+  return $form;
+
+  }
+
+/**
+ *  submit and save admin data
+ */
+function cred_sf_admin_submit($form, &$form_state) {
+  variable_set('cred_user', $form_state['input']['cred_user']);
+  variable_set('cred_pass', $form_state['input']['cred_pass']);
+  variable_set('cred_key', $form_state['input']['cred_key']);
+  variable_set('cred_error', $form_state['input']['cred_error']);
+  drupal_set_message(t('Saved'), 'status', FALSE);
+}
+
+
+
+
+
+/**
+ *  Builds admin form
+ */
+function sfmapping_form($form, &$form_state) {
+
+  $tp_results = db_select('sfmapping', 's')
+                  ->fields('s')
+                  ->orderBy('form_id', 'DESC')
+                  ->execute()
+                  ->fetchAll();
+
+  require_once ('soapclient/SforceEnterpriseClient.php');
+  $path = drupal_get_path('module', 'sfmapping');
+  $enterprise_wsdl = $path . "/soapclient/enterprise.wsdl.xml";
+
+  $usr = variable_get('cred_user');
+  $pss = variable_get('cred_pass');
+  $key = variable_get('cred_key');
+
+  $SforceConnection = new SforceEnterpriseClient();
+  $SoapClient = $SforceConnection->createConnection($enterprise_wsdl);
+  $login = $SforceConnection->login($usr, $pss.$key);
+
+  $response = $SforceConnection->describeSObject('Lead');
+  $leadOptions = [];
+  foreach($response->fields as $row => $value) {
+    $leadOptions[$value->name] = $value->label;
+  }
+
+  // Let's build a table
+  $rows = array();
+  $header = array('Delete',
+                  'Drupal Webform',
+                  'Drupal Webform Field',
+                  'Salesforce Lead Field');
+
+  foreach ( $tp_results as $row ) {
+    $webform_node = node_load($row->form_id);
+    $rows[] = array('<a href="/admin/sfmapping?sfmapping_delete=' .
+              $row->form_id . '_' .
+              $row->form_field . '" name=' .
+              $row->form_id . '>X</a>',
+    $rows[] = $webform_node->title,
+    $rows[] = $row->form_field,
+    $rows[] = $row->sf_field);
+  }
+
+
+  $ct_results = db_query('SELECT nid, title FROM {node} WHERE type = :type', array(':type' => 'webform'));
+
+
+  $options_first = sfmapping_first_dropdown_options();
+  $options_second = sfmapping_second_dropdown_options();
+  $options_first_element = array();
+
+  $ct_options[] = '-- Choose Drupal Webform --';
+    foreach ( $ct_results as $row ) {
+      $ct_options[$row->nid] = $row->title;
+    }
+
+  $wf_options[] = '-- Webforms --';
+    foreach ( $wf_results as $row ) {
+      $wf_options[$row->nid] = $row->title;
+    }
+
+
+  $value_dropdown_first         = isset($form_state['values']['content_type']) ? $form_state['values']['content_type'] : key(array($options_first));
+  $value_dropdown_first_element = isset($form_state['values']['webforms']) ? $form_state['values']['webforms'] : key(array($options_first_element));
+  $value_content_element        = isset($form_state['values']['dropdown_first']);
+
+  $value_dropdown_second        = isset($form_state['values']['guid']) ? $form_state['values']['guid'] : key(array($options_second));
+
+
+  // Let's build a form
+  $form['content_type'] = array(
+    '#type' => 'select',
+    '#title' => t('Drupal Webform'),
+    '#options' => $ct_options,
+    '#default_value' => $value_dropdown_first,
+    '#ajax' => array(
+      'event' => 'change',
+      'callback' => 'sfmapping_ajax_callback',
+      'wrapper' => 'dropdown_first_replace',
+      'effect' => 'fade'
+      ),
+  );
+
+  $form['dropdown_first'] = array(
+    '#type' => 'select',
+    '#title' => 'Drupal Webform Fields',
+    '#prefix' => '<div id="dropdown_first_replace">',
+    '#suffix' => '</div>',
+    '#options' => sfmapping_first_dropdown_options_components($value_dropdown_first),
+    '#default_value' => $value_content_element,
+  );
+
+  $form['sflead'] = array(
+    '#type' => 'select',
+    '#title' => t('Salesforce Lead'),
+    '#options' => $leadOptions,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Submit',
+  );
+
+
+  $form['#submit'][] = 'sfmapping_form_submit';
+
+  // Remember that table we built? Lets print it!
+  $form['markup'] = array(
+    '#markup' => theme('table', array('header' => $header, 'rows' => $rows)),
+    '#title' => t(''),
+  );
+
+  return $form;
+
+}
+
+
+/**
+ *  Ajax callbacks
+ */
+function sfmapping_ajax_callback($form, $form_state) {
+  return $form['dropdown_first'];
+}
+
+function sfmapping_ajax_callback_element($form, $form_state) {
+  return $form['dropdown_second'];
+}
+
+function sfmapping_first_dropdown_options() {
+     if ( isset($ct_results) ) {
+      return $ct_results;
+    }
+}
+
+function sfmapping_second_dropdown_options() {
+     if ( isset($wf_results) ) {
+      return $wf_results;
+    }
+}
+
+/**
+ *  Drupal webform field dropdown
+ */
+function sfmapping_first_dropdown_options_components($value_dropdown_first) {
+  $ce_results = db_query('SELECT form_key, name FROM {webform_component} WHERE nid = :nid', array(':nid' => $value_dropdown_first));
+    foreach ( $ce_results as $row ) {
+      $options[$row->form_key] = $row->name;
+    }
+  return $options;
+}
+
+
+/**
+ *  Let's submit this and map that form field!
+ */
+function sfmapping_form_submit($form, $form_state) {
+  $webform_nid = $form_state['values']['content_type'];
+  $webform_field = $form_state['values']['dropdown_first'];
+  $salesforce_element = $form_state['values']['sflead'];
+
+
+  if (is_numeric($webform_nid)) {
+    db_insert('sfmapping')
+      ->fields(array('form_id', 'form_field', 'sf_field'))
+      ->values(array(
+        'form_id'    => $webform_nid,
+        'form_field' => $webform_field,
+        'sf_field'   => $salesforce_element,
+       ))
+     ->execute();
+   }
+    else {
+       // just in case, we don't want to crash
+       drupal_set_message('Nid must be an integer.');
+  }
+}
+
+
+function sfmapping_form_alter(&$form, &$form_state) {
+  // if(preg_match('/webform_client_form/', $form['#form_id'])) {
+  //   $sfmapping = db_select('sfmapping', 'f')
+  //                 ->fields('f')
+  //                 ->condition('form_id', $form['#node']->nid, '=')
+  //                 ->execute()
+  //                 ->fetchAll();
+
+  //   // dpm($sfmapping);
+  //   // if (count($sfmapping) > 0) {
+  //   //   // $form['#submit'][] = 'submit_salesforce_form';
+  //   //   // $form['actions']['submit']['#submit'][] = 'submit_salesforce_form';
+  //   //   // dpm($form);
+  //   // }
+  //   //dpm($form);
+  //   return $form;
+  // }
+}
+
+
+/**
+ *  Implements hook_webform_submission_insert
+ */
+function sfmapping_webform_submission_insert($node, $submission) {
+
+  $sfmapping = db_select('sfmapping', 'f')
+                ->fields('f')
+                ->condition('form_id', $node->nid, '=')
+                ->execute()
+                ->fetchAll();
+
+  if (count($sfmapping) > 0) {
+    $sfPost = [];
+    foreach ($sfmapping as $sfobject => $sfmap) {
+      // dpm($sfmap);
+      foreach ($node->webform['components'] as $key => $value) {
+        if ($sfmap->form_field == $value['form_key']) {
+          // dpm($sfmap->sf_field . ': ' . $value['form_key']);
+          if (strlen($submission->data[$key][0]) > 0) {
+            // dpm($value['form_key'] . ': ' . $submission->data[$key][0]);
+            $sfPost[$sfmap->sf_field] = $submission->data[$key][0];
+          }
+        }
+      }
+    }
+  }
+
+  // dpm($sfPost);
+
+
+  require_once ('soapclient/SforceEnterpriseClient.php');
+  $path = drupal_get_path('module', 'revcor');
+  $enterprise_wsdl = $path . "/soapclient/enterprise.wsdl.xml";
+
+  $usr = variable_get('cred_user');
+  $pss = variable_get('cred_pass');
+  $key = variable_get('cred_key');
+
+    $ENT = new SforceEnterpriseClient();
+    $ENT_client = $ENT->createConnection($enterprise_wsdl);
+    $ENT_login  = $ENT->login($usr, $pss.$key);
+
+    $new_lead = [];
+    foreach ($sfPost as $key => $value) {
+      $new_lead[0]->{$key} = $value;
+    }
+
+    dpm($new_lead);
+
+    $response = $ENT->create($new_lead, 'lead');
+
+    dpm($response);
+
+    // Error email
+    if ($response[0]->id == NULL) {
+      $body = "<h3>Webform Submitted Data</h3><br />";
+      $body .= date('m/d/Y') . "<br /><br /><ul>";
+      foreach ($response[0]->errors as $key => $value) {
+        $body .= '<li><strong>' . $value->message . "</strong></li>";
+      }
+      $body .= '</ul>';
+      $params = array(
+        'subject' => 'SFmapping CRM Error',
+        'body' =>  $body,
+      );
+     $email = variable_get('sfmapping_error', 'EMAIL');
+     drupal_mail('sfmapping', 'sfmapping_crm_error', $email, language_default(), $params);
+    }
+      else {
+        // drupal_goto('/thank-you');
+      }
+
+}
+
+
+/**
+ * Implementation of hook_mail().
+ */
+function sfmapping_mail($key, &$message, $params){
+  $headers = array(
+    'MIME-Version' => '1.0',
+    'Content-Type' => 'text/html; charset=UTF-8; format=flowed',
+    'Content-Transfer-Encoding' => '8Bit',
+    'X-Mailer' => 'Drupal'
+  );
+
+  foreach ($headers as $key => $value) {
+    $message['headers'][$key] = $value;
+  }
+
+  $message['subject'] = $params['subject'];
+  $message['body'][] = $params['body'];
+
+  switch ($key) {
+    case "revcor_crm_error":
+      // Make other changes here if desired...
+      break;
+  }
+
+}

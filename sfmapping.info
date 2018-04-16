@@ -1,0 +1,9 @@
+; $Id: $
+name = Salesforce Mapping
+description = Mapping Webform fields to Salesforce
+core = "7.x"
+package = Custom
+
+
+
+

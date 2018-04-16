@@ -1,0 +1,31 @@
+<?php
+
+/**
+ * @file
+ * SN Tracking install file.
+ */
+
+
+function sfmapping_schema() {
+
+ $schema['sfmapping'] = array(
+    'description'     => 'Mapping Webform to SF.',
+      'fields'        => array(
+       'form_id'      => array(
+         'type'       => 'int',
+         'length'     => 6,
+         'not null'   => FALSE),
+       'form_field'   => array(
+         'type'       => 'varchar',
+         'length'     => 100,
+         'not null'   => FALSE),
+       'sf_field'     => array(
+         'type'       => 'varchar',
+         'length'     => 100,
+         'not null'   => FALSE),
+     ),
+  );
+
+    return $schema;
+
+}
