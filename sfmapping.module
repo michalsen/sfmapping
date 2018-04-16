@@ -45,7 +45,12 @@ function sfmapping_menu() {
     'page callback' => 'credentials_page',
     'access arguments' => array('administer access content')
   );
-
+  $items['admin/sfmapping/import_export'] = array(
+    'title' => 'Import / Export',
+    'type' => MENU_LOCAL_TASK,
+    'page callback' => 'import_export_page',
+    'access arguments' => array('administer access content')
+  );
 
    return $items;
 }
@@ -59,6 +64,36 @@ function credentials_page() {
     return drupal_get_form('credentials_form');
 }
 
+function import_export_page() {
+    return drupal_get_form('import_export_form');
+}
+
+/**
+ *  builds sf import/export admin form
+ */
+function import_export_form($form, $form_state) {
+  $tp_results = db_select('sfmapping', 's')
+                  ->fields('s')
+                  ->orderBy('form_id', 'DESC')
+                  ->execute()
+                  ->fetchAll();
+
+  // dpm(json_encode($tp_results));
+
+  $form['export'] = array(
+     '#type' => 'textarea',
+     '#title' => t('JSON Export'),
+     '#default_value' => json_encode($tp_results),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Import',
+  );
+
+  $form['#submit'][] = 'import_export_submit';
+  return $form;
+}
 
 
 /**
@@ -104,6 +139,35 @@ function credentials_form($form, $form_state) {
 
   }
 
+
+
+
+/**
+ *  submit and save admin data
+ */
+function import_export_submit($form, &$form_state) {
+  // dpm($form_state['input']['export']);
+  $import = json_decode($form_state['input']['export']);
+
+  if (is_array($import)) {
+    db_truncate('sfmapping')->execute();
+
+    foreach ($import as $key => $value) {
+      // dpm($key);
+      // dpm($value);
+      $nid = db_insert('sfmapping') // Table name no longer needs {}
+        ->fields(array(
+          'form_id' => $value->form_id,
+          'form_field' => $value->form_field,
+          'sf_field' => $value->sf_field
+        ))
+      ->execute();
+    }
+  }
+}
+
+
+
 /**
  *  submit and save admin data
  */
@@ -145,7 +209,7 @@ function sfmapping_form($form, &$form_state) {
   $response = $SforceConnection->describeSObject('Lead');
   $leadOptions = [];
   foreach($response->fields as $row => $value) {
-    $leadOptions[$value->name] = $value->label;
+    $leadOptions[$value->name] =  $value->label;
   }
 
   // Let's build a table
